@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+.pytest_cache/
+# Power BI Project local-only files
+report/**/.pbi/localSettings.json
+report/**/.pbi/cache.abf
+*.pbix.bak

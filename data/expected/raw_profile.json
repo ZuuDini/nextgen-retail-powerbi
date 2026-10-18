@@ -1,0 +1,43 @@
+{
+  "seed": 387,
+  "customers": {
+    "customers": 6500,
+    "null_segment": 387,
+    "bad_age": 63
+  },
+  "products": {
+    "products": 240,
+    "header_row": 4,
+    "padded_names": 23,
+    "merged_category_blocks": 4
+  },
+  "regional": {
+    "stores": 20,
+    "region_spellings": 11,
+    "target_header_row": 3,
+    "target_month_columns": 24,
+    "target_rows_after_unpivot": 96
+  },
+  "sales": {
+    "2024": {
+      "raw_rows": 29202,
+      "duplicates": 0,
+      "footer_rows": 1,
+      "whitespace_store_codes": 891,
+      "clean_rows": 29201
+    },
+    "2025": {
+      "raw_rows": 32160,
+      "duplicates": 248,
+      "footer_rows": 0,
+      "whitespace_store_codes": 959,
+      "clean_rows": 31912
+    }
+  },
+  "inventory": {
+    "raw_rows": 115920,
+    "blank_on_hand": 357,
+    "orphan_store_rows": 720,
+    "clean_rows": 114843
+  }
+}

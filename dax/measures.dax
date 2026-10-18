@@ -1,0 +1,208 @@
+// =============================================================================
+// NextGen Retail — DAX
+// Every measure here has a twin with the same name in generator/expected_kpis.py.
+// Milestone 3 check: put each measure on a card, filter by year/region, and
+// compare it to data/expected/kpis.json. Format strings are in [brackets].
+// Put all measures in a "_Measures" table (Home > Enter data > empty table).
+// =============================================================================
+
+
+// ---------- Calculated tables -------------------------------------------------
+
+// Modeling > New table. Then: Table tools > Mark as date table > Date.
+// Sort "Month" by "MonthNum" (Column tools > Sort by column).
+DimDate =
+VAR Base = CALENDAR ( DATE ( 2024, 1, 1 ), DATE ( 2025, 12, 31 ) )
+RETURN
+    ADDCOLUMNS (
+        Base,
+        "Year", YEAR ( [Date] ),
+        "Quarter", "Q" & QUARTER ( [Date] ),
+        "MonthNum", MONTH ( [Date] ),
+        "Month", FORMAT ( [Date], "MMM" ),
+        "YearMonth", FORMAT ( [Date], "YYYY-MM" ),
+        "MonthStart", DATE ( YEAR ( [Date] ), MONTH ( [Date] ), 1 ),
+        "Weekday", FORMAT ( [Date], "ddd" ),
+        "WeekdayNum", WEEKDAY ( [Date], 2 )
+    )
+
+// Modeling > New parameter > Numeric range (what-if): 3 to 20, step 1, default 10.
+// Power BI generates this table and the [Top N Value] measure.
+'Top N' = GENERATESERIES ( 3, 20, 1 )
+Top N Value = SELECTEDVALUE ( 'Top N'[Top N], 10 )
+
+// Modeling > New parameter > Fields. Pick the four measures; Power BI writes this.
+// Use 'Metric Selector' as a slicer and as the Y-axis of one trend chart.
+'Metric Selector' = {
+    ( "Total Sales", NAMEOF ( '_Measures'[Total Sales] ), 0 ),
+    ( "Gross Margin", NAMEOF ( '_Measures'[Gross Margin] ), 1 ),
+    ( "Units Sold", NAMEOF ( '_Measures'[Units Sold] ), 2 ),
+    ( "Orders", NAMEOF ( '_Measures'[Orders] ), 3 )
+}
+
+
+// ---------- Sales ----------------------------------------------------------------
+
+// Net of returns: return lines carry negative quantities. [$#,0.00]
+Total Sales = SUM ( FactSales[LineAmount] )
+
+// Before returns. [$#,0.00]
+Gross Sales = CALCULATE ( [Total Sales], FactSales[Quantity] > 0 )
+
+// Shown as a positive number. [$#,0.00]
+Returns Amount = - CALCULATE ( [Total Sales], FactSales[Quantity] < 0 )
+
+// RELATED walks the many-to-one relationship to the product's cost. [$#,0.00]
+COGS = SUMX ( FactSales, FactSales[Quantity] * RELATED ( DimProduct[UnitCost] ) )
+
+Gross Margin = [Total Sales] - [COGS]                               // [$#,0.00]
+
+Margin % = DIVIDE ( [Gross Margin], [Total Sales] )                // [0.0%]
+
+Units Sold = CALCULATE ( SUM ( FactSales[Quantity] ), FactSales[Quantity] > 0 )
+
+Units Returned = - CALCULATE ( SUM ( FactSales[Quantity] ), FactSales[Quantity] < 0 )
+
+Return Rate % = DIVIDE ( [Units Returned], [Units Sold] )          // [0.0%]
+
+// Distinct orders with at least one sold line (return lines don't create orders).
+Orders = CALCULATE ( DISTINCTCOUNT ( FactSales[OrderID] ), FactSales[Quantity] > 0 )
+
+// Average order value, before returns. [$#,0.00]
+AOV = DIVIDE ( [Gross Sales], [Orders] )
+
+Customers = CALCULATE ( DISTINCTCOUNT ( FactSales[CustomerKey] ), FactSales[Quantity] > 0 )
+
+// Customers with 2+ orders in the current filter context.
+// FILTER iterates customers; [Orders] inside it triggers context transition,
+// so it counts each customer's own orders.
+Repeat Customers =
+COUNTROWS (
+    FILTER (
+        CALCULATETABLE ( VALUES ( FactSales[CustomerKey] ), FactSales[Quantity] > 0 ),
+        [Orders] >= 2
+    )
+)
+
+Repeat Rate % = DIVIDE ( [Repeat Customers], [Customers] )         // [0.0%]
+
+// Value at list price, before discounts. [$#,0.00]
+List Value = SUMX ( FactSales, FactSales[Quantity] * FactSales[UnitPrice] )
+
+// Share of list value given away as discount, on sold lines. [0.0%]
+Avg Discount % =
+CALCULATE (
+    DIVIDE ( [List Value] - [Total Sales], [List Value] ),
+    FactSales[Quantity] > 0
+)
+
+
+// ---------- Time intelligence (needs DimDate marked as date table) ------------
+
+Sales PY = CALCULATE ( [Total Sales], SAMEPERIODLASTYEAR ( DimDate[Date] ) )
+
+Sales YoY % = DIVIDE ( [Total Sales] - [Sales PY], [Sales PY] )    // [0.0%]
+
+Sales YTD = TOTALYTD ( [Total Sales], DimDate[Date] )
+
+Sales MoM % =
+VAR PrevMonth = CALCULATE ( [Total Sales], DATEADD ( DimDate[Date], -1, MONTH ) )
+RETURN DIVIDE ( [Total Sales] - PrevMonth, PrevMonth )
+
+Sales Rolling 3M =
+CALCULATE (
+    [Total Sales],
+    DATESINPERIOD ( DimDate[Date], MAX ( DimDate[Date] ), -3, MONTH )
+)
+
+// Activates the inactive ShipDate relationship for this one measure.
+// Compare with [Total Sales] by month: online orders shift into the next days.
+Sales by Ship Date =
+CALCULATE ( [Total Sales], USERELATIONSHIP ( FactSales[ShipDate], DimDate[Date] ) )
+
+
+// ---------- Targets (slice by DimRegion[Region], not DimStore[Region]) --------
+
+Target Sales = SUM ( RegionTargets[TargetSales] )                  // [$#,0.00]
+
+Sales vs Target = [Total Sales] - [Target Sales]
+
+Sales vs Target % = DIVIDE ( [Sales vs Target], [Target Sales] )   // [+0.0%;-0.0%]
+
+
+// ---------- Inventory ------------------------------------------------------------
+
+// Value of stock on hand at cost, summed over whatever snapshots are in context.
+Inventory Value =
+SUMX ( FactInventory, FactInventory[OnHandUnits] * RELATED ( DimProduct[UnitCost] ) )
+
+// Average of the month-end snapshots in context (12 for a year).
+// Summing snapshots would count the same stock 12 times.
+Avg Inventory Value =
+AVERAGEX ( VALUES ( FactInventory[SnapshotDate] ), [Inventory Value] )
+
+// How many times the average stock sold through in the period. [0.00]
+Inventory Turnover = DIVIDE ( [COGS], [Avg Inventory Value] )
+
+// Days the average stock would last at the period's daily COGS. [0.0]
+Days of Supply =
+DIVIDE ( [Avg Inventory Value], DIVIDE ( [COGS], COUNTROWS ( DimDate ) ) )
+
+// Units on hand at the last snapshot in context.
+Ending On Hand Units =
+VAR LastSnap = MAX ( FactInventory[SnapshotDate] )
+RETURN CALCULATE ( SUM ( FactInventory[OnHandUnits] ), FactInventory[SnapshotDate] = LastSnap )
+
+Sell-Through % =                                                     // [0.0%]
+DIVIDE ( [Units Sold], [Units Sold] + [Ending On Hand Units] )
+
+
+// ---------- Ranking and Top N ---------------------------------------------------
+
+// Blank outside a product row, so totals don't show a meaningless rank.
+Product Sales Rank =
+IF (
+    ISINSCOPE ( DimProduct[ProductName] ),
+    RANKX ( ALLSELECTED ( DimProduct[ProductName] ), [Total Sales], , DESC, DENSE )
+)
+
+// Use in a table/bar chart of products: only the top N (slider) show a value.
+Top N Sales = IF ( [Product Sales Rank] <= [Top N Value], [Total Sales] )
+
+
+// ---------- Logic, labels, conditional formatting -------------------------------
+
+Margin Status =
+SWITCH (
+    TRUE (),
+    ISBLANK ( [Margin %] ), BLANK (),
+    [Margin %] >= 0.50, "Healthy",
+    [Margin %] >= 0.47, "Watch",
+    "At Risk"
+)
+
+// Format > Conditional formatting > Field value = this measure.
+Margin Color =
+SWITCH ( [Margin Status], "Healthy", "#2E7D32", "Watch", "#F9A825", "At Risk", "#C62828" )
+
+Target Flag =
+IF ( [Sales vs Target %] >= 0, "▲ Above target", "▼ Below target" )
+
+// Dynamic title: Format > Title > fx > Field value = this measure.
+Page Title =
+"Sales performance — " & SELECTEDVALUE ( DimRegion[Region], "All regions" )
+
+
+// ---------- Row-level security (Modeling > Manage roles) ------------------------
+
+// Static roles, one per region, filter on table DimRegion:
+//   Northeast Manager:  [Region] = "Northeast"
+//   South Manager:      [Region] = "South"
+//   Midwest Manager:    [Region] = "Midwest"
+//   West Manager:       [Region] = "West"
+//
+// Dynamic variant (stretch): add a RegionManagers table (Enter data:
+// Email, Region; no relationship needed), and use a single role
+// filtering DimRegion with:
+//   [Region] IN CALCULATETABLE ( VALUES ( RegionManagers[Region] ),
+//                                RegionManagers[Email] = USERPRINCIPALNAME () )
